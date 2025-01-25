@@ -1,0 +1,117 @@
+# Model training configuration
+training_settings:
+  default:
+    batch_size: 32
+    epochs: 100
+    learning_rate: 0.001
+    validation_split: 0.2
+    early_stopping: true
+    patience: 10
+    optimizer: "adam"
+    save_best_only: true
+    monitor_metric: "val_loss"
+
+  gpu_settings:
+    memory_limit: 8192  # MB
+    allow_growth: true
+    mixed_precision: true
+    multi_gpu: false
+    gpu_count: 1
+
+  checkpointing:
+    enabled: true
+    frequency: "epoch"  # epoch or steps
+    max_to_keep: 5
+    save_format: "tf"  # tf or h5
+    include_optimizer: true
+
+frameworks_config:
+  pytorch:
+    default_settings:
+      precision: 32
+      accelerator: "gpu"
+      devices: 1
+      gradient_clip_val: 1.0
+      accumulate_grad_batches: 1
+    optimizers:
+      adam:
+        lr: 0.001
+        weight_decay: 0.01
+      sgd:
+        lr: 0.01
+        momentum: 0.9
+
+  tensorflow:
+    default_settings:
+      mixed_precision: true
+      xla_acceleration: true
+      tensor_cores: true
+      tf_gpu_memory_growth: true
+    optimizers:
+      adam:
+        learning_rate: 0.001
+        beta_1: 0.9
+        beta_2: 0.999
+      rmsprop:
+        learning_rate: 0.001
+        rho: 0.9
+
+data_handling:
+  augmentation:
+    enabled: true
+    techniques:
+      - "random_flip"
+      - "random_rotation"
+      - "random_zoom"
+    probability: 0.5
+
+  preprocessing:
+    normalization: "standard"  # standard, minmax, robust
+    handle_missing: "mean"  # mean, median, constant
+    categorical_encoding: "onehot"  # onehot, label
+    text_preprocessing:
+      lowercase: true
+      remove_punctuation: true
+      remove_numbers: false
+
+monitoring:
+  metrics:
+    - "loss"
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1"
+
+  logging:
+    log_frequency: 100  # steps
+    profile_batch: "100,120"
+    log_images: true
+    log_graphs: true
+
+  visualization:
+    enabled: true
+    plots:
+      - "confusion_matrix"
+      - "roc_curve"
+      - "precision_recall_curve"
+    save_format: "png"
+
+distributed_training:
+  strategy: "mirrored"  # mirrored, multi_worker
+  synchronization:
+    all_reduce_alg: "nccl"
+    num_packs: 1
+  communication:
+    auto_shard_policy: "data"
+    cross_device_ops: "nccl"
+
+hardware_configs:
+  cpu_settings:
+    num_parallel_calls: -1  # -1 means auto
+    enable_threading: true
+    thread_count: null  # null means auto
+
+  memory_settings:
+    dataset_memory_prefetch: 1
+    shuffle_buffer_size: 10000
+    cache_dataset: false

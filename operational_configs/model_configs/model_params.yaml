@@ -1,0 +1,90 @@
+# Model parameters configuration
+model_settings:
+  default_visibility: true  # public by default
+  upload_timeout: 3600  # 1 hour in seconds
+  processing_timeout: 1800  # 30 minutes in seconds
+
+frameworks:
+  pytorch:
+    files:
+      - "*.pt"
+      - "*.pth"
+      - "config.json"
+      - "tokenizer.json"
+    required_files:
+      - "model.pt"
+      - "config.json"
+
+  tensorflow:
+    files:
+      - "*.pb"
+      - "*.h5"
+      - "*.keras"
+      - "saved_model.pb"
+    required_files:
+      - "saved_model.pb"
+      - "variables/"
+
+  sklearn:
+    files:
+      - "*.pkl"
+      - "*.joblib"
+    required_files:
+      - "model.pkl"
+
+model_types:
+  computer_vision:
+    task_ids:
+      - "image-classification"
+      - "object-detection"
+      - "image-segmentation"
+    default_framework: "pytorch"
+
+  nlp:
+    task_ids:
+      - "text-classification"
+      - "token-classification"
+      - "question-answering"
+    default_framework: "pytorch"
+
+  tabular:
+    task_ids:
+      - "regression"
+      - "classification"
+      - "clustering"
+    default_framework: "sklearn"
+
+version_control:
+  max_versions: 10
+  keep_latest: true
+  archive_old_versions: true
+  version_naming: "v{major}.{minor}"
+  auto_increment: true
+
+resource_limits:
+  max_model_size: 10737418240  # 10GB
+  max_artifact_size: 1073741824  # 1GB
+  max_total_size: 21474836480  # 20GB
+
+metadata_requirements:
+  required_fields:
+    - "name"
+    - "version_name"
+    - "description"
+    - "framework"
+    - "task_ids"
+  optional_fields:
+    - "training_data"
+    - "model_type"
+    - "training_params"
+    - "license"
+
+documentation:
+  required_files:
+    - "README.md"
+    - "MODEL_CARD.md"
+  optional_files:
+    - "CHANGELOG.md"
+    - "USAGE.md"
+    - "LIMITATIONS.md"
+  templates_path: "templates/model_docs"

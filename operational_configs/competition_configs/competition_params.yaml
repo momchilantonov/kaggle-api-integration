@@ -1,0 +1,126 @@
+# Competition parameters configuration
+data_paths:
+  default: "data/competitions"
+  submissions: "data/competitions/submissions"
+  leaderboards: "data/competitions/leaderboards"
+  models: "data/competitions/models"
+  leaderboard_history: "data/competitions/history"
+
+active_competitions:
+  titanic:
+    data_path: "data/competitions/titanic"
+    deadline: "2024-12-31"
+    metric: "accuracy"
+    file_structure:
+      train: "train.csv"
+      test: "test.csv"
+      sample_submission: "gender_submission.csv"
+    target_column: "Survived"
+    score_range: [0, 1]
+
+  house_prices:
+    data_path: "data/competitions/house_prices"
+    deadline: "2024-12-31"
+    metric: "rmse"
+    file_structure:
+      train: "train.csv"
+      test: "test.csv"
+      sample_submission: "sample_submission.csv"
+    target_column: "SalePrice"
+    score_range: [0, null]
+
+leaderboard_tracking:
+  update_frequency: 3600  # seconds
+  store_history: true
+  track_position: true
+  track_score_changes: true
+  notification_threshold: 10  # position change
+
+  analysis:
+    calculate_statistics: true
+    track_trends: true
+    generate_reports: true
+    compare_submissions: true
+
+performance_tracking:
+  metrics:
+    - "score"
+    - "rank"
+    - "delta_score"
+    - "delta_rank"
+    - "submission_time"
+
+  visualizations:
+    enabled: true
+    types:
+      - "score_history"
+      - "rank_history"
+      - "performance_distribution"
+    save_format: "png"
+
+notification_settings:
+  enabled: true
+  events:
+    submission_complete: true
+    score_improved: true
+    rank_changed: true
+    deadline_approaching: true
+
+  deadline_warnings:
+    - 7  # days
+    - 3
+    - 1
+
+team_settings:
+  enabled: false
+  max_team_size: 5
+  merge_submissions: false
+  track_individual_contributions: true
+
+model_management:
+  save_models: true
+  version_control: true
+  track_parameters: true
+  store_predictions: true
+
+  model_metadata:
+    parameters: true
+    performance: true
+    training_time: true
+    submission_history: true
+
+resource_allocation:
+  cpu:
+    max_cores: 4
+    memory_limit: "16g"
+
+  gpu:
+    enabled: false
+    memory_limit: "16g"
+
+  storage:
+    submission_limit: "1g"
+    dataset_limit: "10g"
+
+automation:
+  auto_submit: false
+  schedule_submissions: false
+  validate_before_submit: true
+  backup_submissions: true
+
+  schedules:
+    max_frequency: 3600  # seconds
+    preferred_times: ["09:00", "15:00", "21:00"]
+    blackout_periods: ["00:00-06:00"]
+
+monitoring:
+  log_level: "INFO"
+  track_api_usage: true
+  track_resources: true
+  save_logs: true
+
+  alerts:
+    deadline_approaching: true
+    score_threshold: true
+    rank_threshold: true
+    error_rate: true

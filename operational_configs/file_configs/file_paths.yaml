@@ -1,0 +1,49 @@
+# File paths configuration
+base_paths:
+  root: "data/files"
+  downloads: "data/files/downloads"
+  uploads: "data/files/uploads"
+  processed: "data/files/processed"
+  temp: "data/files/temp"
+  backups: "data/files/backups"
+  logs: "data/files/logs"
+
+dataset_paths:
+  competitions:
+    titanic:
+      train: "data/files/competitions/titanic/train.csv"
+      test: "data/files/competitions/titanic/test.csv"
+      submission: "data/files/competitions/titanic/submission.csv"
+    house_prices:
+      train: "data/files/competitions/house_prices/train.csv"
+      test: "data/files/competitions/house_prices/test.csv"
+      submission: "data/files/competitions/house_prices/submission.csv"
+
+model_paths:
+  checkpoints: "data/files/models/checkpoints"
+  saved_models: "data/files/models/saved"
+  artifacts: "data/files/models/artifacts"
+  config: "data/files/models/config"
+
+output_paths:
+  visualizations: "data/files/outputs/visualizations"
+  reports: "data/files/outputs/reports"
+  metrics: "data/files/outputs/metrics"
+  predictions: "data/files/outputs/predictions"
+
+temporary_paths:
+  cache: "data/files/temp/cache"
+  staging: "data/files/temp/staging"
+  processing: "data/files/temp/processing"
+
+archive_paths:
+  datasets: "data/files/archives/datasets"
+  models: "data/files/archives/models"
+  submissions: "data/files/archives/submissions"
+  logs: "data/files/archives/logs"
+
+log_paths:
+  app_logs: "data/files/logs/app"
+  error_logs: "data/files/logs/errors"
+  access_logs: "data/files/logs/access"
+  workflow_logs: "data/files/logs/workflows"

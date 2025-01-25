@@ -1,0 +1,96 @@
+# Competition submission rules configuration
+submission_settings:
+  default:
+    max_daily_submissions: 5
+    file_format: "csv"
+    required_columns:
+      - "id"
+      - "prediction"
+    column_types:
+      id: "int"
+      prediction: "float"
+    file_size_limit: 100000000  # 100MB
+
+  competitions:
+    titanic:
+      max_daily_submissions: 10
+      file_format: "csv"
+      required_columns:
+        - "PassengerId"
+        - "Survived"
+      column_types:
+        PassengerId: "int"
+        Survived: "int"
+      scoring_metric: "accuracy"
+
+    house_prices:
+      max_daily_submissions: 5
+      file_format: "csv"
+      required_columns:
+        - "Id"
+        - "SalePrice"
+      column_types:
+        Id: "int"
+        SalePrice: "float"
+      scoring_metric: "rmse"
+
+validation_rules:
+  format_checking:
+    verify_headers: true
+    check_column_types: true
+    allow_extra_columns: false
+    case_sensitive: true
+
+  data_validation:
+    check_missing_values: true
+    check_infinite_values: true
+    check_negative_values: false
+    value_ranges:
+      probability: [0, 1]
+      positive_only: [0, null]
+
+  file_validation:
+    check_encoding: true
+    check_size: true
+    check_format: true
+    allowed_formats:
+      - "csv"
+      - "zip"
+
+submission_tracking:
+  store_history: true
+  track_performance: true
+  save_files: true
+  storage_path: "data/competitions/submissions"
+  backup_enabled: true
+
+  history_format:
+    timestamp: true
+    score: true
+    rank: true
+    file_hash: true
+    metadata: true
+
+error_handling:
+  retry_on_failure: true
+  max_retries: 3
+  retry_delay: 60  # seconds
+  error_logging: true
+  notification_on_failure: true
+
+automl_settings:
+  enabled: false
+  max_trials: 100
+  timeout: 3600  # seconds
+  optimization_metric: "auto"
+  early_stopping: true
+
+ensemble_settings:
+  enabled: true
+  max_models: 5
+  voting_method: "weighted"
+  weight_by_cv: true
+  diversity_metric: "correlation"
+
+scoring_timeout: 3600  # seconds
+wait_between_submissions: 300  # seconds

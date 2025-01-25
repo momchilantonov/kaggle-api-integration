@@ -1,0 +1,97 @@
+# Kernel resource configuration
+resource_limits:
+  cpu:
+    cores: 4
+    threads_per_core: 2
+    memory: "16g"
+    memory_swap: "2g"
+    cpu_period: 100000
+    cpu_quota: 400000
+
+  gpu:
+    enabled: false
+    memory: "16g"
+    count: 1
+    compute_capability: "7.0"
+    driver_version: "460.00"
+    cuda_version: "11.0"
+
+  storage:
+    temp_space: "5g"
+    output_size: "1g"
+    artifact_size: "500m"
+    log_size: "100m"
+
+time_limits:
+  execution_timeout: 3600  # seconds
+  idle_timeout: 1800  # seconds
+  initialization_timeout: 300  # seconds
+  shutdown_timeout: 60  # seconds
+
+network:
+  bandwidth_limit: "1g"
+  rate_limit: 1000  # requests per hour
+  allowed_hosts:
+    - "kaggle.com"
+    - "githubusercontent.com"
+    - "anaconda.org"
+  blocked_ports:
+    - 22
+    - 3306
+    - 6379
+
+container:
+  memory_limit: "16g"
+  memory_reservation: "8g"
+  memory_swap_limit: "20g"
+  pids_limit: 1000
+  ulimits:
+    nofile:
+      soft: 1024
+      hard: 4096
+    nproc:
+      soft: 1024
+      hard: 2048
+
+monitoring_limits:
+  metrics_collection_interval: 60  # seconds
+  log_rotation_size: "100m"
+  max_log_files: 5
+  alert_thresholds:
+    cpu_percent: 90
+    memory_percent: 85
+    disk_percent: 80
+
+quota_limits:
+  daily_executions: 100
+  concurrent_runs: 5
+  max_datasets: 10
+  max_file_size: "1g"
+  max_total_size: "10g"
+
+dependency_limits:
+  max_packages: 100
+  max_package_size: "100m"
+  pip_timeout: 300  # seconds
+  allowed_package_sources:
+    - "pypi"
+    - "conda-forge"
+  blacklisted_packages:
+    - "tensorflow-gpu"  # use regular tensorflow instead
+    - "torch-gpu"  # use regular torch instead
+
+performance_tuning:
+  io_settings:
+    read_chunk_size: 8192
+    write_buffer_size: 65536
+    max_open_files: 1000
+
+  process_settings:
+    nice_level: 10
+    ionice_class: 2
+    ionice_level: 4
+
+  thread_settings:
+    pool_size: 4
+    queue_size: 1000
+    worker_timeout: 60

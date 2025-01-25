@@ -1,0 +1,61 @@
+# File operations configuration
+file_settings:
+  downloads:
+    default_path: "data/files/downloads"
+    create_directories: true
+    overwrite_existing: false
+    backup_existing: true
+    chunk_size: 8192  # bytes for file downloads
+    max_retries: 3
+    retry_delay: 1  # seconds
+
+  uploads:
+    default_path: "data/files/uploads"
+    max_file_size: 100000000  # 100MB
+    allowed_extensions:
+      - ".csv"
+      - ".xlsx"
+      - ".json"
+      - ".txt"
+      - ".zip"
+      - ".gz"
+      - ".parquet"
+      - ".h5"
+    manifest_path: "data/files/manifests"
+
+  processing:
+    chunk_size: 10000  # rows for data processing
+    compression_type: "gzip"
+    encoding: "utf-8"
+    temp_directory: "data/files/temp"
+
+backup_settings:
+  enabled: true
+  path: "data/files/backups"
+  retention_days: 30
+  max_backups: 5
+  compression: true
+  include_timestamp: true
+
+file_patterns:
+  data_files: "*.csv"
+  model_files: "*.pt"
+  config_files: "*.yaml"
+  archive_files:
+    - "*.zip"
+    - "*.gz"
+  text_files:
+    - "*.txt"
+    - "*.md"
+    - "*.log"
+
+validation_settings:
+  max_file_size_mb: 1000
+  allowed_mime_types:
+    - "text/csv"
+    - "application/json"
+    - "application/x-yaml"
+    - "application/vnd.ms-excel"
+    - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  validate_encoding: true
+  check_file_headers: true
