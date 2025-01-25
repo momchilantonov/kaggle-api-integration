@@ -1,0 +1,104 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+env/
+.venv/
+.env/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Log files
+logs/
+*.log
+
+# PostgreSQL data files
+*.sql
+*.sql.gz
+*.pgdump
+
+# Redis dump files
+*.rdb
+
+# Runtime data
+celerybeat-schedule
+celerybeat.pid
+
+# Pytest cache
+.pytest_cache/
+
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Flask instance folder (if applicable)
+instance/
+
+# Environment-specific files
+.env
+.flaskenv
+
+# Node.js dependencies
+node_modules/
+
+# React build output
+build/
+
+# Static and media files (if served by Flask)
+app/static/
+app/media/
+
+# TypeScript cache files
+*.tsbuildinfo
+
+# Machine learning model files
+*.h5
+*.pkl
+*.joblib
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Backup files
+*.bak
+*.swp
+*~
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows system files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
