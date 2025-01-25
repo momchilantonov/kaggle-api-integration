@@ -4,8 +4,8 @@ from pathlib import Path
 import json
 import time
 
-from src.api.kernels import KernelClient, KernelMetadata
 from src.api.kaggle_client import KaggleAPIClient
+from src.api.kernels import KernelClient, KernelMetadata
 
 @pytest.fixture
 def mock_kaggle_client():
