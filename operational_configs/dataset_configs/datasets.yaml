@@ -1,0 +1,18 @@
+frequently_used_datasets:
+  titanic:
+    owner: "titanic"
+    dataset: "titanic"
+    files:
+      - "train.csv"
+      - "test.csv"
+      - "gender_submission.csv"
+    local_path: "data/datasets/titanic"
+
+  house_prices:
+    owner: "house-prices-advanced-regression-techniques"
+    dataset: "house-prices-dataset"
+    files:
+      - "train.csv"
+      - "test.csv"
+      - "data_description.txt"
+    local_path: "data/datasets/house_prices"

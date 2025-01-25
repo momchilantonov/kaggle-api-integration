@@ -1,0 +1,15 @@
+kaggle==1.5.16               # Official Kaggle API
+pandas==2.1.4                # Data manipulation and analysis
+numpy==1.24.3                # Numerical computations
+python-dotenv==1.0.0         # Environment variables management
+requests==2.31.0             # HTTP library for API requests
+tqdm==4.66.1                 # Progress bars for downloads
+python-slugify==8.0.1        # URL slugification for Kaggle paths
+certifi==2023.11.17          # Required for SSL certification
+urllib3==2.1.0               # HTTP client
+six==1.16.0                  # Python 2 and 3 compatibility
+pytest==7.4.3                # For test
+pytest-cov==4.1.0            # For coverage reporting
+pytest-mock==3.12.0          # For mocking
+PyYAML==6.0.1                # YAML parser
+psutil==5.9.8                # For memory monitoring

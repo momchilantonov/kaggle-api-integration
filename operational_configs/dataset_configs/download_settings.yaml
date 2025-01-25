@@ -1,0 +1,16 @@
+download_preferences:
+  default_path: "data/datasets/raw"
+  auto_extract: true
+  create_backup: true
+  file_types:
+    - "csv"
+    - "xlsx"
+  max_file_size: 1000000000  # 1GB
+
+processing_settings:
+  chunk_size: 10000
+  default_missing_strategies:
+    numeric: "mean"
+    categorical: "mode"
+    datetime: "drop"
+  encoding: "utf-8"
