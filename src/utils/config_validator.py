@@ -441,9 +441,356 @@ MODEL_CONFIG_SCHEMAS = {
     }
 }
 
+KERNEL_CONFIG_SCHEMAS = {
+    'runtime_settings': {
+        'type': 'object',
+        'required': ['kernel_settings', 'monitoring', 'version_control', 'dependencies'],
+        'properties': {
+            'kernel_settings': {
+                'type': 'object',
+                'required': ['default_path', 'language_settings', 'execution_settings'],
+                'properties': {
+                    'default_path': {'type': 'string'},
+                    'language_settings': {
+                        'type': 'object',
+                        'properties': {
+                            'python': {
+                                'type': 'object',
+                                'required': ['version', 'file_extensions'],
+                                'properties': {
+                                    'version': {'type': 'string'},
+                                    'file_extensions': {
+                                        'type': 'array',
+                                        'items': {'type': 'string'}
+                                    },
+                                    'default_packages': {
+                                        'type': 'array',
+                                        'items': {'type': 'string'}
+                                    }
+                                }
+                            },
+                            'r': {
+                                'type': 'object',
+                                'required': ['version', 'file_extensions'],
+                                'properties': {
+                                    'version': {'type': 'string'},
+                                    'file_extensions': {
+                                        'type': 'array',
+                                        'items': {'type': 'string'}
+                                    },
+                                    'default_packages': {
+                                        'type': 'array',
+                                        'items': {'type': 'string'}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    'execution_settings': {
+                        'type': 'object',
+                        'properties': {
+                            'timeout': {'type': 'integer'},
+                            'max_output_size': {'type': 'integer'},
+                            'enable_gpu': {'type': 'boolean'},
+                            'enable_internet': {'type': 'boolean'},
+                            'save_output': {'type': 'boolean'},
+                            'save_artifacts': {'type': 'boolean'}
+                        }
+                    },
+                    'kernel_types': {
+                        'type': 'object',
+                        'properties': {
+                            'notebook': {
+                                'type': 'object',
+                                'properties': {
+                                    'metadata_format': {'type': 'string'},
+                                    'auto_viz': {'type': 'boolean'},
+                                    'inline_plots': {'type': 'boolean'}
+                                }
+                            },
+                            'script': {
+                                'type': 'object',
+                                'properties': {
+                                    'metadata_format': {'type': 'string'},
+                                    'generate_notebook': {'type': 'boolean'},
+                                    'output_format': {'type': 'string'}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            'monitoring': {
+                'type': 'object',
+                'properties': {
+                    'log_level': {'type': 'string'},
+                    'metrics': {
+                        'type': 'object',
+                        'properties': {
+                            'enabled': {'type': 'boolean'},
+                            'collect_memory': {'type': 'boolean'},
+                            'collect_cpu': {'type': 'boolean'},
+                            'collect_gpu': {'type': 'boolean'}
+                        }
+                    },
+                    'alerts': {
+                        'type': 'object',
+                        'properties': {
+                            'memory_threshold': {'type': 'number'},
+                            'execution_time_threshold': {'type': 'integer'},
+                            'error_notification': {'type': 'boolean'}
+                        }
+                    }
+                }
+            },
+            'version_control': {
+                'type': 'object',
+                'properties': {
+                    'enabled': {'type': 'boolean'},
+                    'max_versions': {'type': 'integer'},
+                    'auto_versioning': {'type': 'boolean'},
+                    'version_naming': {'type': 'string'},
+                    'keep_history': {'type': 'boolean'}
+                }
+            },
+            'dependencies': {
+                'type': 'object',
+                'properties': {
+                    'package_management': {
+                        'type': 'object',
+                        'properties': {
+                            'pip': {
+                                'type': 'object',
+                                'properties': {
+                                    'requirements_file': {'type': 'string'},
+                                    'allow_pip_install': {'type': 'boolean'}
+                                }
+                            },
+                            'conda': {
+                                'type': 'object',
+                                'properties': {
+                                    'environment_file': {'type': 'string'},
+                                    'allow_conda_install': {'type': 'boolean'}
+                                }
+                            }
+                        }
+                    },
+                    'conflict_resolution': {
+                        'type': 'object',
+                        'properties': {
+                            'strategy': {'type': 'string'},
+                            'pin_versions': {'type': 'boolean'},
+                            'allow_upgrades': {'type': 'boolean'}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    'resource_limits': {
+        'type': 'object',
+        'required': ['cpu', 'gpu', 'storage', 'network'],
+        'properties': {
+            'cpu': {
+                'type': 'object',
+                'properties': {
+                    'cores': {'type': 'integer'},
+                    'threads_per_core': {'type': 'integer'},
+                    'memory': {'type': 'string'},
+                    'memory_swap': {'type': 'string'},
+                    'cpu_period': {'type': 'integer'},
+                    'cpu_quota': {'type': 'integer'}
+                }
+            },
+            'gpu': {
+                'type': 'object',
+                'properties': {
+                    'enabled': {'type': 'boolean'},
+                    'memory': {'type': 'string'},
+                    'count': {'type': 'integer'},
+                    'compute_capability': {'type': 'string'},
+                    'driver_version': {'type': 'string'},
+                    'cuda_version': {'type': 'string'}
+                }
+            },
+            'storage': {
+                'type': 'object',
+                'properties': {
+                    'temp_space': {'type': 'string'},
+                    'output_size': {'type': 'string'},
+                    'artifact_size': {'type': 'string'},
+                    'log_size': {'type': 'string'}
+                }
+            },
+            'network': {
+                'type': 'object',
+                'properties': {
+                    'bandwidth_limit': {'type': 'string'},
+                    'rate_limit': {'type': 'integer'},
+                    'allowed_hosts': {
+                        'type': 'array',
+                        'items': {'type': 'string'}
+                    },
+                    'blocked_ports': {
+                        'type': 'array',
+                        'items': {'type': 'integer'}
+                    }
+                }
+            }
+        }
+    }
+}
 
+COMPETITION_CONFIG_SCHEMAS = {
+    'competition_params': {
+        'type': 'object',
+        'required': ['data_paths', 'active_competitions'],
+        'properties': {
+            'data_paths': {
+                'type': 'object',
+                'required': ['default', 'submissions', 'leaderboards', 'models'],
+                'properties': {
+                    'default': {'type': 'string'},
+                    'submissions': {'type': 'string'},
+                    'leaderboards': {'type': 'string'},
+                    'models': {'type': 'string'},
+                    'leaderboard_history': {'type': 'string'}
+                }
+            },
+            'active_competitions': {
+                'type': 'object',
+                'patternProperties': {
+                    '^.*$': {  # Pattern for competition names
+                        'type': 'object',
+                        'required': ['data_path', 'deadline', 'metric', 'file_structure'],
+                        'properties': {
+                            'data_path': {'type': 'string'},
+                            'deadline': {'type': 'string'},
+                            'metric': {'type': 'string'},
+                            'file_structure': {
+                                'type': 'object',
+                                'properties': {
+                                    'train': {'type': 'string'},
+                                    'test': {'type': 'string'},
+                                    'sample_submission': {'type': 'string'}
+                                }
+                            },
+                            'target_column': {'type': 'string'},
+                            'score_range': {
+                                'type': 'array',
+                                'items': {'type': ['number', 'null']},
+                                'minItems': 2,
+                                'maxItems': 2
+                            }
+                        }
+                    }
+                }
+            },
+            'leaderboard_tracking': {
+                'type': 'object',
+                'properties': {
+                    'update_frequency': {'type': 'integer'},
+                    'store_history': {'type': 'boolean'},
+                    'track_position': {'type': 'boolean'},
+                    'track_score_changes': {'type': 'boolean'},
+                    'notification_threshold': {'type': 'integer'},
+                    'analysis': {
+                        'type': 'object',
+                        'properties': {
+                            'calculate_statistics': {'type': 'boolean'},
+                            'track_trends': {'type': 'boolean'},
+                            'generate_reports': {'type': 'boolean'},
+                            'compare_submissions': {'type': 'boolean'}
+                        }
+                    }
+                }
+            },
+            'performance_tracking': {
+                'type': 'object',
+                'properties': {
+                    'metrics': {
+                        'type': 'array',
+                        'items': {'type': 'string'}
+                    },
+                    'visualizations': {
+                        'type': 'object',
+                        'properties': {
+                            'enabled': {'type': 'boolean'},
+                            'types': {
+                                'type': 'array',
+                                'items': {'type': 'string'}
+                            },
+                            'save_format': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    'submission_rules': {
+        'type': 'object',
+        'required': ['submission_settings'],
+        'properties': {
+            'submission_settings': {
+                'type': 'object',
+                'required': ['default'],
+                'properties': {
+                    'default': {
+                        'type': 'object',
+                        'required': ['max_daily_submissions', 'file_format', 'required_columns'],
+                        'properties': {
+                            'max_daily_submissions': {'type': 'integer'},
+                            'file_format': {'type': 'string'},
+                            'required_columns': {
+                                'type': 'array',
+                                'items': {'type': 'string'}
+                            },
+                            'column_types': {
+                                'type': 'object',
+                                'patternProperties': {
+                                    '^.*$': {'type': 'string'}
+                                }
+                            },
+                            'file_size_limit': {'type': 'integer'}
+                        }
+                    },
+                    'competitions': {
+                        'type': 'object',
+                        'patternProperties': {
+                            '^.*$': {
+                                'type': 'object',
+                                'required': ['max_daily_submissions', 'file_format', 'required_columns'],
+                                'properties': {
+                                    'max_daily_submissions': {'type': 'integer'},
+                                    'file_format': {'type': 'string'},
+                                    'required_columns': {
+                                        'type': 'array',
+                                        'items': {'type': 'string'}
+                                    },
+                                    'column_types': {
+                                        'type': 'object',
+                                        'patternProperties': {
+                                            '^.*$': {'type': 'string'}
+                                        }
+                                    },
+                                    'scoring_metric': {'type': 'string'}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
-CONFIG_SCHEMAS = {}
+CONFIG_SCHEMAS = {
+    'file_configs': FILE_CONFIG_SCHEMAS,
+    'dataset_configs': DATASET_CONFIG_SCHEMAS,
+    'model_configs': MODEL_CONFIG_SCHEMAS,
+    'kernel_configs': KERNEL_CONFIG_SCHEMAS,
+    'competition_configs': COMPETITION_CONFIG_SCHEMAS
+}
 
 class ConfigValidator:
     @staticmethod
