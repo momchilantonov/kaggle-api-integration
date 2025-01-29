@@ -1,262 +1,204 @@
 from pathlib import Path
-import yaml
-from typing import Optional, List, Dict, Union
+from typing import Dict, Optional, Union, List, Callable
 import logging
-import shutil
+from datetime import datetime
 import json
+import shutil
 
-from src.api.kaggle_client import KaggleAPIClient
 from src.api.datasets import DatasetClient, DatasetMetadata
 from src.handlers.data_handlers import DataHandler
-from src.utils.helpers import timer, retry_on_exception, compress_file
+from src.utils.path_manager import PathManager
+from src.utils.error_handlers import handle_api_errors
 
 logger = logging.getLogger(__name__)
 
 class DatasetUploadManager:
+    """Manages dataset upload workflows"""
+
     def __init__(self):
-        """Initialize the dataset upload manager"""
-        self.kaggle_client = KaggleAPIClient()
-        self.dataset_client = DatasetClient(self.kaggle_client)
+        self.dataset_client = DatasetClient()
         self.data_handler = DataHandler()
-        self._load_configs()
+        self.path_manager = PathManager()
+        # Ensure required directories exist
+        self.path_manager.ensure_directories()
 
-    def _load_configs(self):
-        """Load operational configurations"""
-        try:
-            with open('operational_configs/dataset_configs/datasets.yaml', 'r') as f:
-                self.dataset_config = yaml.safe_load(f)
-            logger.info("Successfully loaded dataset configurations")
-        except Exception as e:
-            logger.error(f"Error loading configurations: {str(e)}")
-            raise
-
-    @timer
+    @handle_api_errors
     def prepare_dataset_folder(
         self,
         source_files: List[Union[str, Path]],
         dataset_name: str,
-        include_metadata: bool = True
+        include_metadata: bool = True,
+        validate_files: bool = True
     ) -> Path:
-        """
-        Prepare a folder with dataset files and metadata
-
-        Args:
-            source_files: List of files to include
-            dataset_name: Name for the dataset
-            include_metadata: Whether to include dataset-metadata.json
-
-        Returns:
-            Path to prepared folder
-        """
+        """Prepare a folder with dataset files and metadata"""
         try:
-            # Create dataset directory
-            dataset_dir = Path("data/datasets/uploads") / dataset_name
-            dataset_dir.mkdir(parents=True, exist_ok=True)
+            # Get upload directory path
+            upload_dir = self.path_manager.get_path('datasets', 'uploads') / dataset_name
+            upload_dir.mkdir(parents=True, exist_ok=True)
 
-            # Copy files to dataset directory
+            # Validate and copy files
+            copied_files = []
+            total_size = 0
             for file_path in source_files:
                 file_path = Path(file_path)
                 if not file_path.exists():
                     raise FileNotFoundError(f"File not found: {file_path}")
 
+                if validate_files:
+                    self._validate_file(file_path)
+
                 # Copy file
-                shutil.copy2(file_path, dataset_dir / file_path.name)
+                target_path = upload_dir / file_path.name
+                shutil.copy2(file_path, target_path)
+                copied_files.append({
+                    'name': file_path.name,
+                    'size': file_path.stat().st_size,
+                    'type': file_path.suffix[1:] if file_path.suffix else 'unknown'
+                })
+                total_size += file_path.stat().st_size
+
                 logger.info(f"Copied {file_path.name} to dataset directory")
 
-            # Create metadata file if requested
+            # Create dataset metadata if requested
             if include_metadata:
-                self._create_metadata_file(dataset_dir, dataset_name)
+                metadata = {
+                    'name': dataset_name,
+                    'created_at': datetime.now().isoformat(),
+                    'files': copied_files,
+                    'total_size': total_size,
+                    'file_count': len(copied_files)
+                }
+                metadata_path = upload_dir / 'dataset-metadata.json'
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
 
-            return dataset_dir
+            return upload_dir
 
         except Exception as e:
             logger.error(f"Error preparing dataset folder: {str(e)}")
+            # Clean up on error
+            if 'upload_dir' in locals():
+                shutil.rmtree(upload_dir)
             raise
 
-    def _create_metadata_file(
-        self,
-        dataset_dir: Path,
-        dataset_name: str
-    ) -> Path:
-        """Create dataset metadata file"""
-        try:
-            metadata = {
-                "title": dataset_name,
-                "id": f"{self.kaggle_client.credentials['username']}/{dataset_name}",
-                "licenses": [{"name": "CC0-1.0"}],
-                "keywords": [],
-                "resources": []
-            }
+    def _validate_file(self, file_path: Path) -> None:
+        """Validate file before upload"""
+        # Check file size (100MB limit for example)
+        max_size = 100 * 1024 * 1024  # 100MB
+        if file_path.stat().st_size > max_size:
+            raise ValueError(f"File {file_path.name} exceeds size limit of 100MB")
 
-            # Add resources information
-            for file_path in dataset_dir.glob('*'):
-                if file_path.name != 'dataset-metadata.json':
-                    metadata['resources'].append({
-                        "path": file_path.name,
-                        "description": f"File: {file_path.name}"
-                    })
+        # Validate file type
+        allowed_extensions = {'.csv', '.json', '.txt', '.zip', '.gz'}
+        if file_path.suffix.lower() not in allowed_extensions:
+            raise ValueError(
+                f"File type {file_path.suffix} not allowed. "
+                f"Allowed types: {allowed_extensions}"
+            )
 
-            metadata_path = dataset_dir / 'dataset-metadata.json'
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
+        # Validate CSV files
+        if file_path.suffix.lower() == '.csv':
+            try:
+                df = self.data_handler.read_csv(file_path)
+                if df.empty:
+                    raise ValueError(f"CSV file {file_path.name} is empty")
+            except Exception as e:
+                raise ValueError(f"Invalid CSV file {file_path.name}: {str(e)}")
 
-            logger.info(f"Created metadata file: {metadata_path}")
-            return metadata_path
-
-        except Exception as e:
-            logger.error(f"Error creating metadata file: {str(e)}")
-            raise
-
-    @timer
-    @retry_on_exception(retries=3, delay=1)
+    @handle_api_errors
     def upload_dataset(
         self,
         dataset_dir: Path,
         metadata: DatasetMetadata,
-        public: bool = True
+        public: bool = True,
+        progress_callback: Optional[Callable] = None
     ) -> Dict:
-        """
-        Upload dataset to Kaggle
-
-        Args:
-            dataset_dir: Directory containing dataset files
-            metadata: Dataset metadata
-            public: Whether dataset should be public
-
-        Returns:
-            Upload response
-        """
+        """Upload dataset to Kaggle"""
         try:
+            # Validate dataset directory
+            if not dataset_dir.exists():
+                raise NotADirectoryError(f"Dataset directory not found: {dataset_dir}")
+
+            # Create backup before upload
+            backup_dir = self.path_manager.get_path('datasets', 'uploads') / 'backups'
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / f"{dataset_dir.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.copytree(dataset_dir, backup_path)
+
+            # Upload dataset
             result = self.dataset_client.create_dataset(
                 folder_path=dataset_dir,
                 metadata=metadata,
                 public=public
             )
-            logger.info(f"Successfully uploaded dataset: {result}")
+
+            # Log upload details
+            upload_log_path = self.path_manager.get_path('datasets', 'uploads') / 'uploads.log'
+            with open(upload_log_path, 'a') as f:
+                f.write(
+                    f"{datetime.now()},{metadata.title},{result.get('ref', 'N/A')},"
+                    f"{'public' if public else 'private'}\n"
+                )
+
+            # Update progress if callback provided
+            if progress_callback:
+                progress_callback(100, 100)
+
             return result
 
         except Exception as e:
             logger.error(f"Error uploading dataset: {str(e)}")
             raise
 
-    @timer
+    @handle_api_errors
     def create_dataset_version(
         self,
         dataset_dir: Path,
         version_notes: str,
         delete_old_versions: bool = False
     ) -> Dict:
-        """
-        Create new version of existing dataset
-
-        Args:
-            dataset_dir: Directory containing updated files
-            version_notes: Notes describing changes
-            delete_old_versions: Whether to delete previous versions
-
-        Returns:
-            Version creation response
-        """
+        """Create new version of existing dataset"""
         try:
+            # Validate dataset directory
+            if not dataset_dir.exists():
+                raise NotADirectoryError(f"Dataset directory not found: {dataset_dir}")
+
+            # Create backup before version creation
+            backup_dir = self.path_manager.get_path('datasets', 'uploads') / 'version_backups'
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / f"{dataset_dir.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.copytree(dataset_dir, backup_path)
+
+            # Create new version
             result = self.dataset_client.create_version(
                 folder_path=dataset_dir,
                 version_notes=version_notes,
                 delete_old_versions=delete_old_versions
             )
-            logger.info(f"Successfully created dataset version: {result}")
+
+            # Log version creation
+            version_log_path = self.path_manager.get_path('datasets', 'uploads') / 'versions.log'
+            with open(version_log_path, 'a') as f:
+                f.write(
+                    f"{datetime.now()},{dataset_dir.name},{result.get('version', 'N/A')},"
+                    f"{version_notes}\n"
+                )
+
             return result
 
         except Exception as e:
             logger.error(f"Error creating dataset version: {str(e)}")
             raise
 
-    @timer
-    def update_dataset_metadata(
-        self,
-        dataset_slug: str,
-        metadata: DatasetMetadata
-    ) -> Dict:
-        """
-        Update dataset metadata
+if __name__ == '__main__':
+    # Example usage
+    manager = DatasetUploadManager()
 
-        Args:
-            dataset_slug: Dataset identifier
-            metadata: Updated metadata
-
-        Returns:
-            Update response
-        """
-        try:
-            owner_slug = self.kaggle_client.credentials['username']
-            result = self.dataset_client.update_metadata(
-                owner_slug=owner_slug,
-                dataset_slug=dataset_slug,
-                metadata=metadata
-            )
-            logger.info(f"Successfully updated dataset metadata: {result}")
-            return result
-
-        except Exception as e:
-            logger.error(f"Error updating dataset metadata: {str(e)}")
-            raise
-
-    def prepare_files_for_upload(
-        self,
-        source_files: List[Union[str, Path]],
-        compress: bool = True
-    ) -> List[Path]:
-        """
-        Prepare files for upload (compress if needed)
-
-        Args:
-            source_files: List of files to prepare
-            compress: Whether to compress large files
-
-        Returns:
-            List of prepared file paths
-        """
-        try:
-            prepared_files = []
-            for file_path in source_files:
-                file_path = Path(file_path)
-                if not file_path.exists():
-                    raise FileNotFoundError(f"File not found: {file_path}")
-
-                # Check if compression needed
-                if compress and file_path.stat().st_size > 100 * 1024 * 1024:  # 100MB
-                    compressed_path = compress_file(file_path, method='gzip')
-                    prepared_files.append(compressed_path)
-                    logger.info(f"Compressed {file_path.name}")
-                else:
-                    prepared_files.append(file_path)
-
-            return prepared_files
-
-        except Exception as e:
-            logger.error(f"Error preparing files: {str(e)}")
-            raise
-
-def main():
-    """Example usage of dataset upload operations"""
     try:
-        # Initialize manager
-        manager = DatasetUploadManager()
-
-        # Prepare files for upload
-        source_files = [
-            Path("data/processed/train.csv"),
-            Path("data/processed/test.csv"),
-            Path("data/processed/sample_submission.csv")
-        ]
-
-        # Prepare dataset folder
-        dataset_name = "example-dataset"
-        dataset_dir = manager.prepare_dataset_folder(
-            source_files,
-            dataset_name,
-            include_metadata=True
-        )
-        print(f"\nPrepared dataset directory: {dataset_dir}")
+        # Prepare dataset for upload
+        source_files = [Path("data.csv"), Path("description.txt")]
+        dataset_dir = manager.prepare_dataset_folder(source_files, "example-dataset")
+        print(f"Prepared dataset at: {dataset_dir}")
 
         # Create metadata
         metadata = DatasetMetadata(
@@ -264,28 +206,12 @@ def main():
             slug="example-dataset",
             description="This is an example dataset",
             licenses=[{"name": "CC0-1.0"}],
-            keywords=["example", "test"],
-            collaborators=None
+            keywords=["example", "test"]
         )
 
         # Upload dataset
-        result = manager.upload_dataset(
-            dataset_dir,
-            metadata,
-            public=True
-        )
-        print(f"\nUpload result: {result}")
-
-        # Create new version
-        version_result = manager.create_dataset_version(
-            dataset_dir,
-            "Updated data files",
-            delete_old_versions=False
-        )
-        print(f"\nVersion creation result: {version_result}")
+        result = manager.upload_dataset(dataset_dir, metadata)
+        print(f"Upload result: {result}")
 
     except Exception as e:
-        print(f"Error in dataset upload operations: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+        print(f"Error: {str(e)}")

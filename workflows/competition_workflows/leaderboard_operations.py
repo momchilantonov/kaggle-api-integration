@@ -1,56 +1,39 @@
 from pathlib import Path
-import yaml
-from typing import Optional, List, Dict, Union
+from typing import Dict, Optional, Union, List
 import logging
-import pandas as pd
 from datetime import datetime
+import pandas as pd
+import json
 
-from src.api.kaggle_client import KaggleAPIClient
 from src.api.competitions import CompetitionClient
+from src.utils.path_manager import PathManager
+from src.utils.error_handlers import handle_api_errors
 from src.handlers.data_handlers import DataHandler
-from src.utils.helpers import timer, retry_on_exception
 
 logger = logging.getLogger(__name__)
 
 class LeaderboardManager:
+    """Manages competition leaderboard workflows"""
+
     def __init__(self):
-        """Initialize the leaderboard manager"""
-        self.kaggle_client = KaggleAPIClient()
-        self.competition_client = CompetitionClient(self.kaggle_client)
+        self.competition_client = CompetitionClient()
         self.data_handler = DataHandler()
-        self._load_configs()
+        self.path_manager = PathManager()
+        # Ensure required directories exist
+        self.path_manager.ensure_directories()
 
-    def _load_configs(self):
-        """Load operational configurations"""
-        try:
-            with open('operational_configs/competition_configs/competition_params.yaml', 'r') as f:
-                self.competition_config = yaml.safe_load(f)
-            logger.info("Successfully loaded competition configurations")
-        except Exception as e:
-            logger.error(f"Error loading configurations: {str(e)}")
-            raise
-
-    @timer
-    @retry_on_exception(retries=3, delay=1)
+    @handle_api_errors
     def track_leaderboard(
         self,
         competition: str,
         store_history: bool = True
     ) -> Dict:
-        """
-        Download and analyze current leaderboard
-
-        Args:
-            competition: Competition name
-            store_history: Whether to store historical data
-
-        Returns:
-            Dictionary with leaderboard analysis
-        """
+        """Download and analyze current leaderboard"""
         try:
             # Download current leaderboard
             leaderboard_path = self.competition_client.download_leaderboard(
-                competition
+                competition,
+                path=self.path_manager.get_path('competitions', 'leaderboards')
             )
 
             # Read and analyze leaderboard
@@ -75,11 +58,20 @@ class LeaderboardManager:
         try:
             analysis = {
                 'total_entries': len(leaderboard_df),
-                'top_score': leaderboard_df.iloc[0]['Score'],
-                'median_score': leaderboard_df['Score'].median(),
-                'score_std': leaderboard_df['Score'].std(),
+                'top_score': leaderboard_df.iloc[0]['Score'] if not leaderboard_df.empty else None,
+                'median_score': leaderboard_df['Score'].median() if not leaderboard_df.empty else None,
+                'score_std': leaderboard_df['Score'].std() if not leaderboard_df.empty else None,
                 'timestamp': datetime.now().isoformat()
             }
+
+            # Add percentile analysis
+            if not leaderboard_df.empty:
+                percentiles = [25, 50, 75, 90, 95, 99]
+                analysis['percentiles'] = {
+                    f'p{p}': leaderboard_df['Score'].quantile(p/100)
+                    for p in percentiles
+                }
+
             return analysis
 
         except Exception as e:
@@ -93,14 +85,21 @@ class LeaderboardManager:
     ) -> Path:
         """Store leaderboard data for historical tracking"""
         try:
-            history_dir = Path(self.competition_config['data_paths']['leaderboard_history'])
+            history_dir = (
+                self.path_manager.get_path('competitions', 'leaderboards') /
+                'history' /
+                competition
+            )
             history_dir.mkdir(parents=True, exist_ok=True)
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            history_path = history_dir / f"{competition}_leaderboard_{timestamp}.csv"
+            history_path = history_dir / f"leaderboard_{timestamp}.csv"
 
             leaderboard_df.to_csv(history_path, index=False)
             logger.info(f"Stored leaderboard history: {history_path}")
+
+            # Create a summary of changes
+            self._create_change_summary(competition, leaderboard_df, history_dir)
 
             return history_path
 
@@ -108,132 +107,117 @@ class LeaderboardManager:
             logger.error(f"Error storing leaderboard history: {str(e)}")
             raise
 
-    @timer
-    def analyze_submission_history(
+    def _create_change_summary(
         self,
         competition: str,
-        top_n: int = 10
-    ) -> Dict:
-        """
-        Analyze submission history for a competition
-
-        Args:
-            competition: Competition name
-            top_n: Number of top submissions to analyze
-
-        Returns:
-            Dictionary with submission analysis
-        """
+        current_leaderboard: pd.DataFrame,
+        history_dir: Path
+    ) -> None:
+        """Create summary of leaderboard changes"""
         try:
-            submissions = self.competition_client.get_competition_submissions(
+            # Get previous leaderboard if exists
+            previous_files = sorted(history_dir.glob('leaderboard_*.csv'))
+            if len(previous_files) > 1:
+                previous_leaderboard = pd.read_csv(previous_files[-2])
+
+                # Compare leaderboards
+                changes = {
+                    'new_entries': len(current_leaderboard) - len(previous_leaderboard),
+                    'top_score_change': (
+                        current_leaderboard.iloc[0]['Score'] -
+                        previous_leaderboard.iloc[0]['Score']
+                        if not current_leaderboard.empty and not previous_leaderboard.empty
+                        else 0
+                    ),
+                    'timestamp': datetime.now().isoformat()
+                }
+
+                # Save changes summary
+                summary_path = history_dir / 'changes_summary.json'
+                if summary_path.exists():
+                    with open(summary_path, 'r') as f:
+                        summary_history = json.load(f)
+                else:
+                    summary_history = []
+
+                summary_history.append(changes)
+                with open(summary_path, 'w') as f:
+                    json.dump(summary_history, f, indent=2)
+
+        except Exception as e:
+            logger.error(f"Error creating change summary: {str(e)}")
+            # Don't raise exception as this is a non-critical operation
+
+    @handle_api_errors
+    def get_leaderboard_trends(
+        self,
+        competition: str,
+        days: int = 7
+    ) -> Dict:
+        """Analyze leaderboard trends over time"""
+        try:
+            history_dir = (
+                self.path_manager.get_path('competitions', 'leaderboards') /
+                'history' /
                 competition
             )
 
-            # Convert to DataFrame for analysis
-            submissions_df = pd.DataFrame(submissions)
+            if not history_dir.exists():
+                return {'error': 'No historical data available'}
 
-            analysis = {
-                'total_submissions': len(submissions_df),
-                'best_score': submissions_df['score'].max(),
-                'average_score': submissions_df['score'].mean(),
-                'score_progression': self._analyze_score_progression(submissions_df),
-                'top_submissions': submissions_df.nlargest(top_n, 'score').to_dict('records')
+            # Get all leaderboard files within the time range
+            cutoff_date = datetime.now() - pd.Timedelta(days=days)
+            history_files = []
+
+            for file_path in history_dir.glob('leaderboard_*.csv'):
+                file_date = datetime.strptime(
+                    file_path.stem.split('_')[1],
+                    "%Y%m%d_%H%M%S"
+                )
+                if file_date >= cutoff_date:
+                    history_files.append(file_path)
+
+            if not history_files:
+                return {'error': f'No data available for the last {days} days'}
+
+            # Analyze trends
+            trends = {
+                'dates': [],
+                'top_scores': [],
+                'median_scores': [],
+                'total_participants': []
             }
 
-            return analysis
+            for file_path in sorted(history_files):
+                df = pd.read_csv(file_path)
+                file_date = datetime.strptime(
+                    file_path.stem.split('_')[1],
+                    "%Y%m%d_%H%M%S"
+                ).isoformat()
+
+                trends['dates'].append(file_date)
+                trends['top_scores'].append(df.iloc[0]['Score'] if not df.empty else None)
+                trends['median_scores'].append(df['Score'].median() if not df.empty else None)
+                trends['total_participants'].append(len(df))
+
+            return trends
 
         except Exception as e:
-            logger.error(f"Error analyzing submission history: {str(e)}")
+            logger.error(f"Error analyzing leaderboard trends: {str(e)}")
             raise
 
-    def _analyze_score_progression(
-        self,
-        submissions_df: pd.DataFrame
-    ) -> List[Dict]:
-        """Analyze score progression over time"""
-        try:
-            submissions_df['timestamp'] = pd.to_datetime(submissions_df['timestamp'])
-            submissions_df = submissions_df.sort_values('timestamp')
+if __name__ == '__main__':
+    # Example usage
+    manager = LeaderboardManager()
 
-            return [
-                {
-                    'submission_number': i + 1,
-                    'score': row['score'],
-                    'timestamp': row['timestamp'].isoformat(),
-                    'improvement': row['score'] - submissions_df.iloc[i-1]['score'] if i > 0 else 0
-                }
-                for i, row in submissions_df.iterrows()
-            ]
-
-        except Exception as e:
-            logger.error(f"Error analyzing score progression: {str(e)}")
-            raise
-
-    @timer
-    def get_competition_status(self, competition: str) -> Dict:
-        """
-        Get current competition status
-
-        Args:
-            competition: Competition name
-
-        Returns:
-            Dictionary with competition status
-        """
-        try:
-            details = self.competition_client.get_competition_details(competition)
-            leaderboard_analysis = self.track_leaderboard(competition, store_history=False)
-            submission_analysis = self.analyze_submission_history(competition)
-
-            status = {
-                'competition': competition,
-                'deadline': details.get('deadline'),
-                'total_teams': details.get('totalTeams'),
-                'current_rank': submission_analysis.get('best_rank'),
-                'best_score': submission_analysis.get('best_score'),
-                'submissions_remaining': details.get('maxSubmissionsPerDay') - submission_analysis.get('today_submissions', 0),
-                'leaderboard_stats': leaderboard_analysis,
-                'submission_stats': submission_analysis
-            }
-
-            return status
-
-        except Exception as e:
-            logger.error(f"Error getting competition status: {str(e)}")
-            raise
-
-def main():
-    """Example usage of leaderboard operations"""
     try:
-        # Initialize manager
-        manager = LeaderboardManager()
+        # Track current leaderboard
+        analysis = manager.track_leaderboard("titanic", store_history=True)
+        print(f"Current leaderboard analysis: {analysis}")
 
-        # Get competition status
-        competition_name = "titanic"
-        status = manager.get_competition_status(competition_name)
-
-        print("\nCompetition Status:")
-        print(f"Competition: {status['competition']}")
-        print(f"Deadline: {status['deadline']}")
-        print(f"Total Teams: {status['total_teams']}")
-        print(f"Current Rank: {status['current_rank']}")
-        print(f"Best Score: {status['best_score']}")
-        print(f"Submissions Remaining Today: {status['submissions_remaining']}")
-
-        print("\nLeaderboard Stats:")
-        leaderboard_stats = status['leaderboard_stats']
-        print(f"Total Entries: {leaderboard_stats['total_entries']}")
-        print(f"Top Score: {leaderboard_stats['top_score']}")
-        print(f"Median Score: {leaderboard_stats['median_score']}")
-
-        print("\nSubmission History:")
-        submission_stats = status['submission_stats']
-        print(f"Total Submissions: {submission_stats['total_submissions']}")
-        print(f"Best Score: {submission_stats['best_score']}")
-        print(f"Average Score: {submission_stats['average_score']}")
+        # Get trends
+        trends = manager.get_leaderboard_trends("titanic", days=7)
+        print(f"Leaderboard trends: {trends}")
 
     except Exception as e:
-        print(f"Error in leaderboard operations: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+        print(f"Error: {str(e)}")

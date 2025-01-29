@@ -1,291 +1,174 @@
 from pathlib import Path
-import yaml
-from typing import Optional, List, Dict, Union
+from typing import Dict, Optional, Union
 import logging
-import time
-import pandas as pd
+from datetime import datetime
 
-from src.api.kaggle_client import KaggleAPIClient
 from src.api.competitions import CompetitionClient, SubmissionMetadata
 from src.handlers.data_handlers import DataHandler
-from src.utils.helpers import timer, retry_on_exception
+from src.utils.path_manager import PathManager
+from src.utils.error_handlers import handle_api_errors
 
 logger = logging.getLogger(__name__)
 
 class CompetitionWorkflowManager:
+    """Manages competition submission workflows"""
+
     def __init__(self):
-        """Initialize the competition workflow manager"""
-        self.kaggle_client = KaggleAPIClient()
-        self.competition_client = CompetitionClient(self.kaggle_client)
+        self.competition_client = CompetitionClient()
         self.data_handler = DataHandler()
-        self._load_configs()
+        self.path_manager = PathManager()
+        # Ensure required directories exist
+        self.path_manager.ensure_directories()
 
-    def _load_configs(self):
-        """Load operational configurations"""
-        try:
-            with open('operational_configs/competition_configs/submission_rules.yaml', 'r') as f:
-                self.submission_config = yaml.safe_load(f)
-            with open('operational_configs/competition_configs/competition_params.yaml', 'r') as f:
-                self.competition_config = yaml.safe_load(f)
-            logger.info("Successfully loaded competition configurations")
-        except Exception as e:
-            logger.error(f"Error loading configurations: {str(e)}")
-            raise
-
-    @timer
-    @retry_on_exception(retries=3, delay=1)
+    @handle_api_errors
     def download_competition_data(
         self,
         competition: str,
-        file_name: Optional[str] = None,
         custom_path: Optional[Path] = None
     ) -> Path:
-        """
-        Download competition data
-
-        Args:
-            competition: Competition name
-            file_name: Specific file to download
-            custom_path: Optional custom download path
-
-        Returns:
-            Path to downloaded data
-        """
+        """Download competition data files"""
         try:
-            # Determine download path
-            base_path = custom_path or Path(self.competition_config['data_paths']['default'])
-            download_path = base_path / competition
-            download_path.mkdir(parents=True, exist_ok=True)
+            # Get competition directory path
+            comp_path = custom_path or self.path_manager.get_path('competitions', 'data') / competition
+            comp_path.mkdir(parents=True, exist_ok=True)
 
             # Download data
             data_path = self.competition_client.download_competition_files(
-                competition,
-                path=download_path,
-                file_name=file_name
+                competition=competition,
+                path=comp_path
             )
 
-            logger.info(f"Successfully downloaded competition data to {data_path}")
+            logger.info(f"Downloaded competition data to {data_path}")
             return data_path
 
         except Exception as e:
             logger.error(f"Error downloading competition data: {str(e)}")
             raise
 
-    @timer
-    def prepare_submission(
-        self,
-        predictions_df: pd.DataFrame,
-        competition: str
-    ) -> Path:
-        """
-        Prepare competition submission
-
-        Args:
-            predictions_df: DataFrame with predictions
-            competition: Competition name
-
-        Returns:
-            Path to prepared submission file
-        """
-        try:
-            # Get submission rules for competition
-            rules = self.submission_config['submission_settings'].get(
-                competition,
-                self.submission_config['submission_settings']['default']
-            )
-
-            # Validate submission format
-            is_valid, errors = self.data_handler.validate_submission_format(
-                predictions_df,
-                required_columns=rules['required_columns'],
-                column_types=rules['column_types']
-            )
-
-            if not is_valid:
-                raise ValueError(f"Invalid submission format: {errors}")
-
-            # Save submission file
-            submission_dir = Path(self.competition_config['data_paths']['submissions'])
-            submission_dir.mkdir(parents=True, exist_ok=True)
-
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            submission_path = submission_dir / f"submission_{timestamp}.csv"
-
-            self.data_handler.write_csv(
-                predictions_df,
-                submission_path,
-                index=False
-            )
-
-            logger.info(f"Prepared submission file: {submission_path}")
-            return submission_path
-
-        except Exception as e:
-            logger.error(f"Error preparing submission: {str(e)}")
-            raise
-
-    @timer
+    @handle_api_errors
     def submit_predictions(
         self,
         competition: str,
-        submission_path: Path,
+        file_path: Union[str, Path],
         message: str,
         wait_for_scoring: bool = True
     ) -> Dict:
-        """
-        Submit predictions to competition
-
-        Args:
-            competition: Competition name
-            submission_path: Path to submission file
-            message: Submission description
-            wait_for_scoring: Whether to wait for scoring
-
-        Returns:
-            Submission results
-        """
+        """Submit predictions to competition"""
         try:
+            file_path = Path(file_path)
+
+            # Validate file exists
+            if not file_path.exists():
+                raise FileNotFoundError(f"Submission file not found: {file_path}")
+
+            # Create backup before submission
+            backup_path = self.path_manager.backup_file(
+                file_path,
+                backup_dir=self.path_manager.get_path('competitions', 'submissions') / 'backups'
+            )
+
             # Create submission metadata
             metadata = SubmissionMetadata(
                 message=message,
-                description=f"Submission at {time.strftime('%Y-%m-%d %H:%M:%S')}",
+                description=f"Submission at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                 quiet=False
             )
 
             # Submit
             result = self.competition_client.submit_to_competition(
-                competition,
-                submission_path,
-                metadata
+                competition=competition,
+                file_path=file_path,
+                metadata=metadata
             )
 
             if wait_for_scoring:
-                result = self.wait_for_scoring(
-                    competition,
-                    result['id'],
-                    timeout=self.submission_config.get('scoring_timeout', 3600)
+                result = self.competition_client.wait_for_submission_scoring(
+                    competition=competition,
+                    submission_id=result['id']
                 )
 
-            logger.info(f"Successfully submitted to competition: {result}")
+            # Log submission details
+            submission_log_path = (
+                self.path_manager.get_path('competitions', 'submissions') /
+                f"{competition}_submissions.log"
+            )
+            with open(submission_log_path, 'a') as f:
+                f.write(
+                    f"{datetime.now()},{file_path.name},{result.get('id')},{result.get('status')}\n"
+                )
+
             return result
 
         except Exception as e:
-            logger.error(f"Error submitting to competition: {str(e)}")
+            logger.error(f"Error submitting predictions: {str(e)}")
             raise
 
-    def wait_for_scoring(
-        self,
-        competition: str,
-        submission_id: str,
-        timeout: int = 3600,
-        check_interval: int = 10
-    ) -> Dict:
-        """
-        Wait for submission scoring
-
-        Args:
-            competition: Competition name
-            submission_id: Submission ID
-            timeout: Maximum time to wait in seconds
-            check_interval: Time between status checks
-
-        Returns:
-            Final submission status
-        """
-        start_time = time.time()
-        while True:
-            try:
-                status = self.competition_client.get_submission_status(
-                    competition,
-                    submission_id
-                )
-
-                if status.get('status') == 'complete':
-                    logger.info(f"Submission {submission_id} scored successfully")
-                    return status
-
-                if status.get('status') == 'failed':
-                    error_msg = status.get('errorMessage', 'Unknown error')
-                    raise RuntimeError(f"Submission failed: {error_msg}")
-
-                if time.time() - start_time > timeout:
-                    raise TimeoutError(
-                        f"Scoring not completed after {timeout} seconds"
-                    )
-
-                time.sleep(check_interval)
-
-            except Exception as e:
-                logger.error(f"Error checking submission status: {str(e)}")
-                raise
-
-    @timer
-    def download_leaderboard(
-        self,
-        competition: str,
-        custom_path: Optional[Path] = None
-    ) -> Path:
-        """
-        Download competition leaderboard
-
-        Args:
-            competition: Competition name
-            custom_path: Optional custom download path
-
-        Returns:
-            Path to leaderboard file
-        """
+    @handle_api_errors
+    def get_competition_status(self, competition: str) -> Dict:
+        """Get competition status and submission history"""
         try:
-            leaderboard_path = self.competition_client.download_leaderboard(
-                competition,
-                path=custom_path or Path(self.competition_config['data_paths']['leaderboards'])
+            # Get competition details
+            details = self.competition_client.get_competition_details(competition)
+
+            # Get submission history
+            submissions = self.competition_client.get_submission_history(competition)
+
+            # Calculate submissions today
+            today = datetime.now().date()
+            submissions_today = sum(
+                1 for sub in submissions
+                if datetime.fromisoformat(sub['date']).date() == today
             )
 
-            logger.info(f"Downloaded leaderboard to {leaderboard_path}")
-            return leaderboard_path
+            # Get best score
+            best_score = max(
+                (sub['score'] for sub in submissions if sub.get('score')),
+                default=None
+            )
+
+            status = {
+                'deadline': details.get('deadline'),
+                'submissions_today': submissions_today,
+                'best_score': best_score,
+                'total_submissions': len(submissions)
+            }
+
+            # Add deadline warning if approaching
+            if details.get('deadline'):
+                deadline = datetime.fromisoformat(details['deadline'])
+                days_remaining = (deadline - datetime.now()).days
+                if days_remaining <= 7:
+                    status['deadline_warning'] = days_remaining
+
+            return status
 
         except Exception as e:
-            logger.error(f"Error downloading leaderboard: {str(e)}")
+            logger.error(f"Error getting competition status: {str(e)}")
             raise
 
-def main():
-    """Example usage of competition workflows"""
-    try:
-        # Initialize manager
-        manager = CompetitionWorkflowManager()
+if __name__ == '__main__':
+    # Example usage
+    manager = CompetitionWorkflowManager()
 
+    # Test competition workflow
+    try:
         # Download competition data
         data_path = manager.download_competition_data("titanic")
-        print(f"\nDownloaded competition data to: {data_path}")
+        print(f"Downloaded data to: {data_path}")
 
-        # Example of preparing and submitting predictions
-        predictions = pd.DataFrame({
-            'PassengerId': range(892, 1310),
-            'Survived': [1, 0] * 209  # Dummy predictions
-        })
+        # Submit predictions (if you have a submission file)
+        submission_file = data_path / "submission.csv"
+        if submission_file.exists():
+            result = manager.submit_predictions(
+                "titanic",
+                submission_file,
+                "Test submission"
+            )
+            print(f"Submission result: {result}")
 
-        # Prepare submission
-        submission_path = manager.prepare_submission(
-            predictions,
-            "titanic"
-        )
-        print(f"\nPrepared submission file: {submission_path}")
-
-        # Submit predictions
-        result = manager.submit_predictions(
-            "titanic",
-            submission_path,
-            "Test submission",
-            wait_for_scoring=True
-        )
-        print(f"\nSubmission result: {result}")
-
-        # Download leaderboard
-        leaderboard_path = manager.download_leaderboard("titanic")
-        print(f"\nDownloaded leaderboard to: {leaderboard_path}")
+        # Get competition status
+        status = manager.get_competition_status("titanic")
+        print(f"Competition status: {status}")
 
     except Exception as e:
-        print(f"Error in competition workflow: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+        print(f"Error: {str(e)}")

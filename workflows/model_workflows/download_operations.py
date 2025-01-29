@@ -1,230 +1,323 @@
+import os
 from pathlib import Path
-import yaml
-from typing import Optional, List, Dict, Union
+from typing import Dict, Optional, Union, List
 import logging
-import time
+from datetime import datetime
+import json
+import shutil
 
-from src.api.kaggle_client import KaggleAPIClient
 from src.api.models import ModelClient, ModelMetadata
-from src.utils.helpers import timer, retry_on_exception, memory_monitor
+from src.utils.path_manager import PathManager
+from src.utils.error_handlers import handle_api_errors
+from src.handlers.data_handlers import DataHandler
 
 logger = logging.getLogger(__name__)
 
-class ModelWorkflowManager:
+class ModelDownloadManager:
+    """Manages model download workflows"""
+
     def __init__(self):
-        """Initialize the model workflow manager"""
-        self.kaggle_client = KaggleAPIClient()
-        self.model_client = ModelClient(self.kaggle_client)
-        self._load_configs()
+        self.model_client = ModelClient()
+        self.data_handler = DataHandler()
+        self.path_manager = PathManager()
+        # Ensure required directories exist
+        self.path_manager.ensure_directories()
 
-    def _load_configs(self):
-        """Load operational configurations"""
-        try:
-            with open('operational_configs/model_configs/model_params.yaml', 'r') as f:
-                self.model_config = yaml.safe_load(f)
-            with open('operational_configs/model_configs/training_config.yaml', 'r') as f:
-                self.training_config = yaml.safe_load(f)
-            logger.info("Successfully loaded model configurations")
-        except Exception as e:
-            logger.error(f"Error loading configurations: {str(e)}")
-            raise
-
-    @timer
-    @retry_on_exception(retries=3, delay=1)
+    @handle_api_errors
     def download_model(
         self,
+        owner: str,
         model_name: str,
         version: Optional[str] = None,
-        custom_path: Optional[Path] = None
+        custom_path: Optional[Path] = None,
+        extract: bool = True
     ) -> Path:
-        """
-        Download a model using predefined configurations
-
-        Args:
-            model_name: Name of the model from config
-            version: Specific version to download
-            custom_path: Optional custom download path
-
-        Returns:
-            Path to downloaded model
-        """
+        """Download model files"""
         try:
-            # Get model info from config
-            model_info = self.model_config['model_settings'].get(model_name)
-            if not model_info:
-                raise ValueError(f"Model {model_name} not found in configurations")
-
-            # Determine download path
-            base_path = custom_path or Path(model_info['local_path'])
-            download_path = base_path / (version or 'latest')
-            download_path.mkdir(parents=True, exist_ok=True)
+            # Get model path
+            model_path = (
+                custom_path or
+                self.path_manager.get_path('models', 'downloaded') / f"{owner}_{model_name}"
+            )
+            model_path.mkdir(parents=True, exist_ok=True)
 
             # Download model
-            model_path = self.model_client.pull_model(
-                owner=model_info['owner'],
+            downloaded_path = self.model_client.pull_model(
+                owner=owner,
                 model_name=model_name,
                 version=version,
-                path=download_path
+                path=model_path
             )
 
-            logger.info(f"Successfully downloaded model {model_name} to {model_path}")
+            # Extract if requested and file is compressed
+            if extract and downloaded_path.suffix == '.zip':
+                self._extract_model(downloaded_path, model_path)
+                downloaded_path.unlink()  # Remove zip after extraction
+
+            # Create download metadata
+            self._create_download_metadata(
+                model_path,
+                owner,
+                model_name,
+                version
+            )
+
+            logger.info(f"Downloaded model to {model_path}")
             return model_path
 
         except Exception as e:
-            logger.error(f"Error downloading model {model_name}: {str(e)}")
+            logger.error(f"Error downloading model: {str(e)}")
             raise
 
-    @timer
-    @memory_monitor(threshold_mb=1000)
-    def verify_model_files(
-        self,
-        model_path: Path,
-        expected_files: List[str]
-    ) -> Dict[str, bool]:
-        """
-        Verify that all expected model files are present
-
-        Args:
-            model_path: Path to downloaded model
-            expected_files: List of expected file names
-
-        Returns:
-            Dictionary indicating presence of each file
-        """
-        results = {}
-        for file_name in expected_files:
-            file_path = model_path / file_name
-            results[file_name] = file_path.exists()
-            if not file_path.exists():
-                logger.warning(f"Missing expected file: {file_name}")
-        return results
-
-    @timer
-    def push_model_version(
-        self,
-        model_path: Path,
-        metadata: ModelMetadata,
-        wait_for_completion: bool = True
-    ) -> Dict:
-        """
-        Push a new model version
-
-        Args:
-            model_path: Path to model files
-            metadata: Model metadata
-            wait_for_completion: Whether to wait for processing completion
-
-        Returns:
-            Response from the API
-        """
+    def _extract_model(self, zip_path: Path, extract_path: Path) -> None:
+        """Extract downloaded model files"""
         try:
-            # Push model
-            result = self.model_client.push_model(
-                model_path,
-                metadata,
-                public=self.model_config.get('default_visibility', True)
-            )
-
-            if wait_for_completion:
-                result = self.wait_for_model_ready(
-                    metadata.name,
-                    timeout=self.model_config.get('push_timeout', 3600)
-                )
-
-            logger.info(f"Successfully pushed model version: {result}")
-            return result
+            import zipfile
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_path)
+            logger.info(f"Extracted model files to {extract_path}")
 
         except Exception as e:
-            logger.error(f"Error pushing model version: {str(e)}")
+            logger.error(f"Error extracting model files: {str(e)}")
             raise
 
-    def wait_for_model_ready(
+    def _create_download_metadata(
         self,
+        model_path: Path,
+        owner: str,
         model_name: str,
-        timeout: int = 3600,
-        check_interval: int = 10
-    ) -> Dict:
-        """
-        Wait for model processing to complete
+        version: Optional[str]
+    ) -> None:
+        """Create metadata about downloaded model"""
+        try:
+            metadata = {
+                'owner': owner,
+                'model_name': model_name,
+                'version': version,
+                'download_date': datetime.now().isoformat(),
+                'files': [
+                    {
+                        'name': f.name,
+                        'size': f.stat().st_size,
+                        'type': f.suffix[1:] if f.suffix else 'unknown'
+                    }
+                    for f in model_path.glob('**/*')
+                    if f.is_file()
+                ]
+            }
 
-        Args:
-            model_name: Name of the model
-            timeout: Maximum time to wait in seconds
-            check_interval: Time between status checks
-
-        Returns:
-            Final model status
-        """
-        start_time = time.time()
-        while True:
+            # Get model info if available
             try:
-                status = self.model_client.get_model_status(model_name)
+                model_info = self.get_model_info(model_path)
+                metadata['model_info'] = model_info
+            except Exception:
+                pass
 
-                if status.get('status') == 'complete':
-                    logger.info(f"Model {model_name} is ready")
-                    return status
+            metadata_path = model_path / 'download_metadata.json'
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
 
-                if status.get('status') == 'failed':
-                    error_msg = status.get('errorMessage', 'Unknown error')
-                    raise RuntimeError(f"Model processing failed: {error_msg}")
+        except Exception as e:
+            logger.error(f"Error creating download metadata: {str(e)}")
+            raise
 
-                if time.time() - start_time > timeout:
-                    raise TimeoutError(f"Model not ready after {timeout} seconds")
+    @handle_api_errors
+    def get_model_info(self, model_path: Path) -> Dict:
+        """Extract model information from downloaded files"""
+        try:
+            info = {}
 
-                time.sleep(check_interval)
+            # Check for model card
+            model_card = model_path / 'MODEL_CARD.md'
+            if model_card.exists():
+                info['model_card'] = model_card.read_text()
 
-            except Exception as e:
-                logger.error(f"Error checking model status: {str(e)}")
-                raise
+            # Check for metrics
+            metrics_file = model_path / 'metrics.json'
+            if metrics_file.exists():
+                with open(metrics_file) as f:
+                    info['metrics'] = json.load(f)
 
-def main():
-    """Example usage of model workflows"""
+            # Check for config
+            config_file = model_path / 'config.json'
+            if config_file.exists():
+                with open(config_file) as f:
+                    info['config'] = json.load(f)
+
+            return info
+
+        except Exception as e:
+            logger.error(f"Error getting model info: {str(e)}")
+            raise
+
+    @handle_api_errors
+    def list_model_versions(
+        self,
+        owner: str,
+        model_name: str
+    ) -> List[Dict]:
+        """List all versions of a model"""
+        try:
+            versions = self.model_client.list_model_versions(owner, model_name)
+
+            # Enhance version information
+            enhanced_versions = []
+            for version in versions:
+                enhanced_version = {
+                    'version_number': version['version_number'],
+                    'created': version['created'],
+                    'framework': version.get('framework', 'unknown'),
+                    'size': self._format_size(version.get('size', 0)),
+                    'description': version.get('description', ''),
+                    'is_latest': version.get('is_latest', False)
+                }
+                enhanced_versions.append(enhanced_version)
+
+            return enhanced_versions
+
+        except Exception as e:
+            logger.error(f"Error listing model versions: {str(e)}")
+            raise
+
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size in bytes to human readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.2f} TB"
+
+    @handle_api_errors
+    def verify_downloaded_model(
+        self,
+        model_path: Path,
+        framework: str
+    ) -> Dict:
+        """Verify downloaded model files and structure"""
+        try:
+            verification = {
+                'status': 'success',
+                'checks': [],
+                'warnings': []
+            }
+
+            # Check framework-specific files
+            framework_files = {
+                'pytorch': ['.pt', '.pth'],
+                'tensorflow': ['.pb', '.h5', '.keras'],
+                'sklearn': ['.pkl', '.joblib']
+            }
+
+            required_extensions = framework_files.get(framework.lower(), [])
+            found_model_file = False
+            for ext in required_extensions:
+                if list(model_path.glob(f'**/*{ext}')):
+                    found_model_file = True
+                    verification['checks'].append(f"Found model file with extension {ext}")
+                    break
+
+            if not found_model_file:
+                verification['status'] = 'warning'
+                verification['warnings'].append(
+                    f"No model file found with extensions {required_extensions}"
+                )
+
+            # Check for required metadata files
+            required_files = ['MODEL_CARD.md', 'download_metadata.json']
+            for file in required_files:
+                if (model_path / file).exists():
+                    verification['checks'].append(f"Found {file}")
+                else:
+                    verification['warnings'].append(f"Missing {file}")
+
+            # Check file permissions
+            for file_path in model_path.glob('**/*'):
+                if not os.access(file_path, os.R_OK):
+                    verification['warnings'].append(
+                        f"File {file_path.name} has incorrect permissions"
+                    )
+
+            return verification
+
+        except Exception as e:
+            logger.error(f"Error verifying model: {str(e)}")
+            raise
+
+    @handle_api_errors
+    def clean_old_downloads(
+        self,
+        keep_days: int = 30,
+        dry_run: bool = True
+    ) -> List[Dict]:
+        """Clean old downloaded models"""
+        try:
+            downloads_dir = self.path_manager.get_path('models', 'downloaded')
+            cleanup_list = []
+            current_time = datetime.now()
+
+            for model_dir in downloads_dir.iterdir():
+                if not model_dir.is_dir():
+                    continue
+
+                metadata_file = model_dir / 'download_metadata.json'
+                if not metadata_file.exists():
+                    continue
+
+                with open(metadata_file) as f:
+                    metadata = json.load(f)
+
+                download_date = datetime.fromisoformat(metadata['download_date'])
+                age_days = (current_time - download_date).days
+
+                if age_days > keep_days:
+                    cleanup_info = {
+                        'path': str(model_dir),
+                        'age_days': age_days,
+                        'size': sum(f.stat().st_size for f in model_dir.glob('**/*') if f.is_file())
+                    }
+                    cleanup_list.append(cleanup_info)
+
+                    if not dry_run:
+                        shutil.rmtree(model_dir)
+                        logger.info(f"Removed old model directory: {model_dir}")
+
+            return cleanup_list
+
+        except Exception as e:
+            logger.error(f"Error cleaning old downloads: {str(e)}")
+            raise
+
+if __name__ == '__main__':
+    # Example usage
+    manager = ModelDownloadManager()
+
     try:
-        # Initialize manager
-        manager = ModelWorkflowManager()
-
-        # Download specific model
+        # Download model
         model_path = manager.download_model(
-            model_name="resnet50",
+            "owner",
+            "model-name",
             version="latest"
         )
-        print(f"\nDownloaded model to: {model_path}")
+        print(f"Downloaded model to: {model_path}")
 
-        # Verify model files
-        expected_files = [
-            "model.pth",
-            "config.json",
-            "README.md"
-        ]
-        verification_results = manager.verify_model_files(
+        # Verify download
+        verification = manager.verify_downloaded_model(
             model_path,
-            expected_files
+            framework="pytorch"
         )
-        print("\nFile Verification Results:")
-        for file_name, exists in verification_results.items():
-            print(f"{file_name}: {'Present' if exists else 'Missing'}")
+        print(f"Verification result: {verification}")
 
-        # Example of pushing a new model version
-        metadata = ModelMetadata(
-            name="custom-resnet",
-            version_name="v1.0",
-            description="Custom ResNet model for image classification",
-            framework="PyTorch",
-            task_ids=["computer-vision", "image-classification"],
-            training_data="ImageNet"
-        )
+        # List versions
+        versions = manager.list_model_versions("owner", "model-name")
+        print("Model versions:")
+        for version in versions:
+            print(f"- Version {version['version_number']}: {version['created']}")
 
-        new_model_path = Path("data/models/custom/resnet-modified")
-        if new_model_path.exists():
-            result = manager.push_model_version(
-                new_model_path,
-                metadata,
-                wait_for_completion=True
-            )
-            print(f"\nPush result: {result}")
+        # Clean old downloads
+        cleanup_list = manager.clean_old_downloads(keep_days=30, dry_run=True)
+        print("\nPotential cleanup candidates:")
+        for item in cleanup_list:
+            print(f"- {item['path']} (Age: {item['age_days']} days)")
 
     except Exception as e:
-        print(f"Error in model workflow: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+        print(f"Error: {str(e)}")

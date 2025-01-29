@@ -1,54 +1,34 @@
 from pathlib import Path
-import yaml
-from typing import Optional, List, Dict, Union
+from typing import Dict, Optional, Union, List
 import logging
+from datetime import datetime
 import shutil
 import json
-from datetime import datetime
+import time
 
-from src.api.kaggle_client import KaggleAPIClient
 from src.api.kernels import KernelClient, KernelMetadata
-from src.utils.helpers import timer, retry_on_exception
+from src.utils.path_manager import PathManager
+from src.utils.error_handlers import handle_api_errors
 
 logger = logging.getLogger(__name__)
 
 class KernelManagementManager:
+    """Manages kernel management workflows"""
+
     def __init__(self):
-        """Initialize the kernel management manager"""
-        self.kaggle_client = KaggleAPIClient()
-        self.kernel_client = KernelClient(self.kaggle_client)
-        self._load_configs()
+        self.kernel_client = KernelClient()
+        self.path_manager = PathManager()
+        # Ensure required directories exist
+        self.path_manager.ensure_directories()
 
-    def _load_configs(self):
-        """Load operational configurations"""
-        try:
-            with open('operational_configs/kernel_configs/runtime_settings.yaml', 'r') as f:
-                self.runtime_config = yaml.safe_load(f)
-            with open('operational_configs/kernel_configs/resource_limits.yaml', 'r') as f:
-                self.resource_config = yaml.safe_load(f)
-            logger.info("Successfully loaded kernel configurations")
-        except Exception as e:
-            logger.error(f"Error loading configurations: {str(e)}")
-            raise
-
-    @timer
+    @handle_api_errors
     def version_kernel(
         self,
         kernel_path: Union[str, Path],
         version_notes: str,
         metadata: Optional[KernelMetadata] = None
     ) -> Dict:
-        """
-        Create new version of kernel
-
-        Args:
-            kernel_path: Path to kernel files
-            version_notes: Notes for version
-            metadata: Optional updated metadata
-
-        Returns:
-            Version creation response
-        """
+        """Create new version of kernel"""
         try:
             kernel_path = Path(kernel_path)
             if not kernel_path.exists():
@@ -68,7 +48,14 @@ class KernelManagementManager:
                 version_notes=version_notes
             )
 
-            logger.info(f"Created new kernel version: {result}")
+            # Log version creation
+            version_log_path = self.path_manager.get_path('kernels', 'scripts') / 'versions.log'
+            with open(version_log_path, 'a') as f:
+                f.write(
+                    f"{datetime.now()},{kernel_path.name},{result.get('version', 'N/A')},"
+                    f"{version_notes}\n"
+                )
+
             return result
 
         except Exception as e:
@@ -79,7 +66,11 @@ class KernelManagementManager:
         """Prepare directory for new version"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            version_dir = kernel_path.parent / f"{kernel_path.name}_version_{timestamp}"
+            version_dir = (
+                self.path_manager.get_path('kernels', 'scripts') /
+                'versions' /
+                f"{kernel_path.name}_version_{timestamp}"
+            )
             version_dir.mkdir(parents=True, exist_ok=True)
 
             # Copy kernel files
@@ -109,11 +100,7 @@ class KernelManagementManager:
             logger.error(f"Error loading kernel metadata: {str(e)}")
             raise
 
-    def _update_kernel_metadata(
-        self,
-        kernel_dir: Path,
-        metadata: KernelMetadata
-    ) -> None:
+    def _update_kernel_metadata(self, kernel_dir: Path, metadata: KernelMetadata) -> None:
         """Update kernel metadata file"""
         try:
             metadata_path = kernel_dir / 'kernel-metadata.json'
@@ -124,22 +111,13 @@ class KernelManagementManager:
             logger.error(f"Error updating kernel metadata: {str(e)}")
             raise
 
-    @timer
+    @handle_api_errors
     def manage_kernel_resources(
         self,
         kernel_name: str,
         resource_config: Dict
     ) -> Dict:
-        """
-        Update kernel resource configuration
-
-        Args:
-            kernel_name: Name of the kernel
-            resource_config: Resource configuration
-
-        Returns:
-            Updated kernel status
-        """
+        """Update kernel resource configuration"""
         try:
             # Get current kernel metadata
             metadata = self.kernel_client.get_kernel_metadata(kernel_name)
@@ -148,86 +126,49 @@ class KernelManagementManager:
             metadata.enable_gpu = resource_config.get('enable_gpu', False)
             metadata.enable_internet = resource_config.get('enable_internet', False)
 
-            # Update kernel with new settings
-            result = self.kernel_client.update_kernel(
-                kernel_name,
-                metadata
-            )
+            # Additional resource configurations
+            if 'memory_limit' in resource_config:
+                metadata.memory_limit = resource_config['memory_limit']
+            if 'timeout' in resource_config:
+                metadata.timeout = resource_config['timeout']
 
-            logger.info(f"Updated kernel resources: {result}")
+            # Update kernel with new settings
+            result = self.kernel_client.update_kernel(kernel_name, metadata)
+
+            # Log resource update
+            resource_log_path = self.path_manager.get_path('kernels', 'scripts') / 'resources.log'
+            with open(resource_log_path, 'a') as f:
+                f.write(
+                    f"{datetime.now()},{kernel_name},Resource Update,"
+                    f"{json.dumps(resource_config)}\n"
+                )
+
             return result
 
         except Exception as e:
             logger.error(f"Error managing kernel resources: {str(e)}")
             raise
 
-    @timer
-    def batch_update_kernels(
-        self,
-        kernel_configs: List[Dict]
-    ) -> List[Dict]:
-        """
-        Update multiple kernels in batch
-
-        Args:
-            kernel_configs: List of kernel configurations
-
-        Returns:
-            List of update results
-        """
-        try:
-            results = []
-            for config in kernel_configs:
-                try:
-                    result = self.manage_kernel_resources(
-                        config['kernel_name'],
-                        config['resources']
-                    )
-                    results.append({
-                        'kernel': config['kernel_name'],
-                        'status': 'success',
-                        'result': result
-                    })
-                except Exception as e:
-                    results.append({
-                        'kernel': config['kernel_name'],
-                        'status': 'error',
-                        'error': str(e)
-                    })
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Error in batch update: {str(e)}")
-            raise
-
-    @timer
+    @handle_api_errors
     def create_kernel_backup(
         self,
         kernel_name: str,
         include_data: bool = True
     ) -> Path:
-        """
-        Create backup of kernel and its data
-
-        Args:
-            kernel_name: Name of the kernel
-            include_data: Whether to include data files
-
-        Returns:
-            Path to backup directory
-        """
+        """Create backup of kernel and its data"""
         try:
             # Create backup directory
-            backup_dir = Path(self.runtime_config['backup_settings']['path'])
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            kernel_backup_dir = backup_dir / f"{kernel_name}_backup_{timestamp}"
-            kernel_backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_dir = (
+                self.path_manager.get_path('kernels', 'scripts') /
+                'backups' /
+                datetime.now().strftime("%Y%m%d_%H%M%S")
+            )
+            backup_dir.mkdir(parents=True, exist_ok=True)
 
             # Pull kernel files
             self.kernel_client.pull_kernel(
                 kernel_name,
-                path=kernel_backup_dir
+                path=backup_dir
             )
 
             # Include data files if requested
@@ -235,15 +176,36 @@ class KernelManagementManager:
                 data_sources = self._get_kernel_data_sources(kernel_name)
                 for source in data_sources:
                     try:
+                        data_dir = backup_dir / 'data'
+                        data_dir.mkdir(exist_ok=True)
                         self.kernel_client.download_kernel_data(
                             source,
-                            kernel_backup_dir / 'data'
+                            data_dir
                         )
                     except Exception as e:
                         logger.warning(f"Error backing up data source {source}: {str(e)}")
 
-            logger.info(f"Created kernel backup at {kernel_backup_dir}")
-            return kernel_backup_dir
+            # Create backup metadata
+            metadata = {
+                'kernel_name': kernel_name,
+                'backup_date': datetime.now().isoformat(),
+                'include_data': include_data,
+                'data_sources': data_sources if include_data else [],
+                'files': [
+                    {
+                        'name': f.name,
+                        'size': f.stat().st_size,
+                        'type': f.suffix[1:] if f.suffix else 'unknown'
+                    }
+                    for f in backup_dir.glob('**/*')
+                ]
+            }
+
+            metadata_path = backup_dir / 'backup_metadata.json'
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+
+            return backup_dir
 
         except Exception as e:
             logger.error(f"Error creating kernel backup: {str(e)}")
@@ -253,47 +215,48 @@ class KernelManagementManager:
         """Get data sources used by kernel"""
         try:
             metadata = self.kernel_client.get_kernel_metadata(kernel_name)
-            return (metadata.dataset_sources or []) + (metadata.competition_sources or [])
+            sources = []
+            if metadata.dataset_sources:
+                sources.extend(metadata.dataset_sources)
+            if metadata.competition_sources:
+                sources.extend(metadata.competition_sources)
+            return sources
 
         except Exception as e:
             logger.error(f"Error getting kernel data sources: {str(e)}")
             return []
 
-def main():
-    """Example usage of kernel management operations"""
+if __name__ == '__main__':
+    # Example usage
+    manager = KernelManagementManager()
+
     try:
-        # Initialize manager
-        manager = KernelManagementManager()
+        # Create kernel version
+        kernel_path = Path("path/to/kernel")
+        result = manager.version_kernel(
+            kernel_path,
+            "Updated data processing"
+        )
+        print(f"Created new version: {result}")
 
-        # Example: Create new kernel version
-        kernel_path = Path("data/kernels/example_kernel")
-        if kernel_path.exists():
-            result = manager.version_kernel(
-                kernel_path,
-                version_notes="Updated data processing"
-            )
-            print(f"\nCreated new version: {result}")
-
-        # Example: Update kernel resources
+        # Update kernel resources
         resource_config = {
             'enable_gpu': True,
-            'enable_internet': True
+            'enable_internet': True,
+            'memory_limit': '16g'
         }
         result = manager.manage_kernel_resources(
             "example-kernel",
             resource_config
         )
-        print(f"\nUpdated resources: {result}")
+        print(f"Updated resources: {result}")
 
-        # Example: Create kernel backup
+        # Create kernel backup
         backup_path = manager.create_kernel_backup(
             "example-kernel",
             include_data=True
         )
-        print(f"\nCreated backup at: {backup_path}")
+        print(f"Created backup at: {backup_path}")
 
     except Exception as e:
-        print(f"Error in kernel management operations: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+        print(f"Error: {str(e)}")

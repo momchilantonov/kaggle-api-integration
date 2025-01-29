@@ -5,7 +5,9 @@ from pathlib import Path
 import json
 import csv
 from io import StringIO
-
+import functools
+import time
+from typing import Callable, Any
 from config.settings import setup_logger
 
 logger = setup_logger('data_handlers', 'data_handlers.log')
@@ -285,3 +287,17 @@ class DataHandler:
                 raise
 
         return df_copy
+
+
+
+def timer(func: Callable) -> Callable:
+    """Decorator for timing function execution"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs) -> Any:
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        duration = end_time - start_time
+        logger.info(f"{func.__name__} completed in {duration:.2f} seconds")
+        return result
+    return wrapper

@@ -15,4 +15,5 @@ PyYAML==6.0.1                # YAML parser
 psutil==5.9.8                # For memory monitoring
 scikit-learn==1.6.1          # Machine Learning
 joblib==1.4.2                # Machine Learning
-jsonschema==4.23.0
+jsonschema==4.23.0           # JSON schema
+click==8.1.7                 # CLI interface

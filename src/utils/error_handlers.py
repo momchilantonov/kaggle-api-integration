@@ -9,6 +9,55 @@ __all__ = ["retry_with_backoff", "handle_api_errors", "RateLimiter", "CLIError"]
 
 logger = logging.getLogger(__name__)
 
+def validate_auth(func):
+    """Decorator to validate API authentication"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            # Check if the first argument is self (instance method)
+            instance = args[0] if args else None
+            if instance and hasattr(instance, 'credentials'):
+                if not instance.credentials:
+                    raise AuthenticationError("No credentials provided")
+                if not all(instance.credentials.values()):
+                    raise AuthenticationError("Invalid credentials")
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Authentication error in {func.__name__}: {str(e)}")
+            raise AuthenticationError("Authentication failed") from e
+    return wrapper
+
+def retry_with_backoff(
+    max_retries: int = 3,
+    backoff_factor: float = 1.5,
+    error_types: tuple = (RequestException,)
+):
+    """Retry decorator with exponential backoff and CLI feedback"""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except error_types as e:
+                    last_error = e
+                    if attempt == max_retries - 1:
+                        if isinstance(e, HTTPError):
+                            handle_api_errors(lambda: None)()
+                        click.echo(click.style(f"Failed after {max_retries} attempts: {str(e)}", fg='red'), err=True)
+                        raise click.Abort()
+                    wait_time = backoff_factor * (2 ** attempt)
+                    click.echo(click.style(
+                        f"Attempt {attempt + 1} failed. Retrying in {wait_time:.1f} seconds...",
+                        fg='yellow'
+                    ), err=True)
+                    time.sleep(wait_time)
+            raise last_error
+        return wrapper
+    return decorator
+
+
 class KaggleAPIError(Exception):
     """Base exception for Kaggle API errors"""
     def __init__(self, message: str, status_code: Optional[int] = None, response: Any = None):
@@ -87,35 +136,6 @@ def handle_api_errors(func):
 
     return wrapper
 
-def retry_with_backoff(
-    max_retries: int = 3,
-    backoff_factor: float = 1.5,
-    error_types: tuple = (RequestException,)
-):
-    """Retry decorator with exponential backoff and CLI feedback"""
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            last_error = None
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except error_types as e:
-                    last_error = e
-                    if attempt == max_retries - 1:
-                        if isinstance(e, HTTPError):
-                            handle_api_errors(lambda: None)()
-                        click.echo(click.style(f"Failed after {max_retries} attempts: {str(e)}", fg='red'), err=True)
-                        raise click.Abort()
-                    wait_time = backoff_factor * (2 ** attempt)
-                    click.echo(click.style(
-                        f"Attempt {attempt + 1} failed. Retrying in {wait_time:.1f} seconds...",
-                        fg='yellow'
-                    ), err=True)
-                    time.sleep(wait_time)
-            raise last_error
-        return wrapper
-    return decorator
 
 class RateLimiter:
     """Rate limiter for API calls with CLI feedback"""
